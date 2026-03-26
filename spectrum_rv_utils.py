@@ -17,7 +17,7 @@ def apply_rv_shift_on_original_grid(
     flux_err=None,
     fill_value=1.0,
 ):
-    """Apply an RV Doppler shift and resample the shifted spectrum onto the original grid.
+    """Apply an RV Doppler shift to the wavelength grid.
 
     Parameters
     ----------
@@ -28,14 +28,14 @@ def apply_rv_shift_on_original_grid(
     rv : float
         Radial velocity in km/s. Positive values redshift the spectrum.
     flux_err : array-like or None, optional
-        Flux uncertainties. If given, they are interpolated in the same way.
+        Flux uncertainties. If given, they are returned unchanged.
     fill_value : float, optional
         Value used outside the interpolation range.
 
     Returns
     -------
     tuple
-        ``(wave_out, flux_out)`` or ``(wave_out, flux_out, flux_err_out)`` if
+        ``(wave_shifted, flux)`` or ``(wave_shifted, flux, flux_err)`` if
         ``flux_err`` is provided.
     """
     wave = np.asarray(wave, dtype=float)
@@ -53,30 +53,13 @@ def apply_rv_shift_on_original_grid(
     doppler_factor = np.sqrt((1.0 + beta) / (1.0 - beta))
     wave_shifted = wave * doppler_factor
 
-    flux_out = np.interp(
-        wave,
-        wave_shifted,
-        flux,
-        left=fill_value,
-        right=fill_value,
-    )
-
     if flux_err is None:
-        return wave.copy(), flux_out
+        return wave_shifted, flux
 
     flux_err = np.asarray(flux_err, dtype=float)
     if flux_err.ndim != 1 or flux_err.shape != flux.shape:
         raise ValueError("flux_err must be a 1D array with the same shape as flux.")
 
-    flux_err_out = np.interp(
-        wave,
-        wave_shifted,
-        flux_err,
-        left=fill_value,
-        right=fill_value,
-    )
-
-    #return wave.copy(), flux_out, flux_err_out
     return wave_shifted, flux, flux_err
 
 
@@ -88,7 +71,7 @@ def shift_spectrum_csv(
     fill_value=1.0,
     default_flux_err=0.001,
 ):
-    """Read a CSV spectrum, apply an RV shift, and save a new CSV on the original grid.
+    """Read a CSV spectrum, shift only the wavelength grid, and save a new CSV.
 
     The input CSV must contain ``wave_val`` and ``flux_val`` columns. If
     ``flux_err`` is missing, a constant uncertainty is written using
