@@ -33,7 +33,7 @@ def create_arve_ccf(
     stellar_parameters: dict[str, Any] | None = None,
     exclude_tellurics: bool = False,
     ccf_err_scale: bool = True,
-    same_wave_grid: bool = True,
+    same_wave_grid: bool = False,
 ) -> dict[str, Any]:
     """Compute one ARVE CCF from one input spectrum CSV and one mask CSV.
 
