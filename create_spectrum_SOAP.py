@@ -206,13 +206,15 @@ def create_spectrum_soap(
         flux=np.asarray(flux, dtype=np.float64),
     )
     input_spectrum.flux = input_spectrum.flux / np.max(input_spectrum.flux)
+    active_regions = [] if active_regions is None else active_regions
+    pixel_spot = input_spectrum if active_regions else None
 
     sim = SOAP.Simulation(
         pixel=input_spectrum,
-        pixel_spot=None,
+        pixel_spot=pixel_spot,
         inst_reso=inst_reso,
         grid=grid,
-        active_regions=[] if active_regions is None else active_regions,
+        active_regions=active_regions,
         ring=ring,
         resample_spectra=resample_spectra,
         interp_strategy=interp_strategy,
