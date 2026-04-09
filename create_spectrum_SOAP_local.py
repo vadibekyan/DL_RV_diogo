@@ -119,6 +119,9 @@ def _build_simulation_compatible(
     """Instantiate SOAP.Simulation with keyword compatibility across SOAP variants."""
     sig = inspect.signature(SOAP.Simulation)
     params = sig.parameters
+    accepts_varkw = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
     kwargs = {
         "pixel": pixel,
         "inst_reso": inst_reso,
@@ -130,11 +133,19 @@ def _build_simulation_compatible(
         "verbose": verbose,
     }
     # Different SOAP versions use one or the other.
-    if "pixel_spot" in params:
+    if "pixel_spot" in params or accepts_varkw:
         kwargs["pixel_spot"] = pixel_spot
     elif "pixel_ar" in params:
         kwargs["pixel_ar"] = pixel_spot
-    return SOAP.Simulation(**kwargs)
+    sim = SOAP.Simulation(**kwargs)
+
+    # Some SOAP versions still reach calculate_signal with self.pixel_spot unset,
+    # then fail with UnboundLocalError when active_regions is non-empty.
+    if active_regions and pixel_spot is not None and getattr(sim, "pixel_spot", None) is None:
+        sim.pixel_spot = copy.deepcopy(getattr(sim, "pixel", pixel_spot))
+        if getattr(sim, "star", None) is not None:
+            sim.star._pixel_spot = sim.pixel_spot
+    return sim
 
 
 def _set_star_compatible(
