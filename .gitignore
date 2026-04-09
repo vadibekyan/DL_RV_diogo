@@ -24,3 +24,5 @@ Thumbs.db
 # Local data/artifacts (uncomment if desired)
 # *.npz
 # *.csv
+
+hpc_results/

@@ -107,6 +107,7 @@ def _ensure_soap_interpolate_compat() -> None:
 def _build_simulation_compatible(
     *,
     pixel,
+    pixel_spot,
     inst_reso: int,
     grid: int,
     active_regions,
@@ -130,9 +131,9 @@ def _build_simulation_compatible(
     }
     # Different SOAP versions use one or the other.
     if "pixel_spot" in params:
-        kwargs["pixel_spot"] = None
+        kwargs["pixel_spot"] = pixel_spot
     elif "pixel_ar" in params:
-        kwargs["pixel_ar"] = None
+        kwargs["pixel_ar"] = pixel_spot
     return SOAP.Simulation(**kwargs)
 
 
@@ -284,12 +285,15 @@ def create_spectrum_soap_from_arrays(
         input_spectrum.flux = input_spectrum.flux / fmax
 
     _ensure_soap_interpolate_compat()
+    active_regions = [] if active_regions is None else active_regions
+    pixel_spot = input_spectrum if active_regions else None
 
     sim = _build_simulation_compatible(
         pixel=input_spectrum,
+        pixel_spot=pixel_spot,
         inst_reso=inst_reso,
         grid=grid,
-        active_regions=[] if active_regions is None else active_regions,
+        active_regions=active_regions,
         ring=ring,
         resample_spectra=resample_spectra,
         interp_strategy=interp_strategy,
