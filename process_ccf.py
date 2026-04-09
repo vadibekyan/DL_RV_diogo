@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Process CCF dataset: round values, normalize CCFs, and save to Parquet.
+Process CCF datasets and merge multiple row-wise CSV files.
 
 Usage:
     python process_ccf.py --input input.csv --output output.parquet
@@ -10,6 +10,7 @@ import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
+
 
 def process_ccf_dataset(input_path, output_path):
     """
@@ -53,6 +54,64 @@ def process_ccf_dataset(input_path, output_path):
     print(f"Saving to {output_file}...")
     df.to_parquet(output_file, index=False)
     print("Done!")
+
+
+def concat_ccf_csv_files(input_dir, output_path=None, pattern="*.csv", sort_paths=True):
+    """
+    Concatenate all matching CSV files in a directory into one DataFrame.
+
+    Args:
+        input_dir (str or Path): Directory containing CSV files to merge.
+        output_path (str or Path, optional): If provided, write the merged table
+            to this path. Supported suffixes are .csv and .parquet.
+        pattern (str): Glob pattern used to select files inside input_dir.
+        sort_paths (bool): Sort matched paths before concatenation.
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame.
+    """
+    input_dir = Path(input_dir)
+    if not input_dir.exists():
+        raise FileNotFoundError(f"Input directory {input_dir} does not exist")
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input path {input_dir} is not a directory")
+
+    csv_paths = list(input_dir.glob(pattern))
+    if sort_paths:
+        csv_paths = sorted(csv_paths)
+
+    if not csv_paths:
+        raise FileNotFoundError(
+            f"No CSV files matching pattern '{pattern}' were found in {input_dir}"
+        )
+
+    print(f"Found {len(csv_paths)} CSV files in {input_dir}")
+    dfs = []
+    for csv_path in csv_paths:
+        print(f"Loading {csv_path}...")
+        dfs.append(pd.read_csv(csv_path))
+
+    df_merged = pd.concat(dfs, axis=0, ignore_index=True)
+    print(f"Concatenated shape: {df_merged.shape}")
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if output_path.suffix.lower() == ".csv":
+            df_merged.to_csv(output_path, index=False)
+        elif output_path.suffix.lower() == ".parquet":
+            df_merged.to_parquet(output_path, index=False)
+        else:
+            raise ValueError(
+                f"Unsupported output format for {output_path}. "
+                "Use .csv or .parquet."
+            )
+
+        print(f"Saved concatenated dataset to {output_path}")
+
+    return df_merged
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process CCF dataset")
