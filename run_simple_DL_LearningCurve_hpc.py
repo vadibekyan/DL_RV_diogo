@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Run a learning-curve experiment for RV prediction on a processed parquet dataset.
+Run a learning-curve experiment for RV prediction on a processed dataset.
 
 The script:
-1. Reads a concatenated parquet dataset from the CCFs folder.
+1. Reads a concatenated CSV or parquet dataset from the CCFs folder.
 2. Builds one fixed train/dev/test split.
 3. Trains the same model on increasing training subset sizes.
 4. Evaluates on the same dev/test splits each time.
@@ -11,7 +11,7 @@ The script:
 
 Example:
     python run_learning_curve_hpc.py \
-        --input-parquet CCFs/full_iccf_dataset_normalized.parquet \
+        --input-path CCFs/full_iccf_dataset_normalized.csv \
         --output-dir results/learning_curve_full \
         --train-sizes 1000 5000 10000 20000 40000 \
         --repeats 3
@@ -37,7 +37,7 @@ from tensorflow.keras import layers
 
 @dataclass
 class ExperimentConfig:
-    input_parquet: str
+    input_path: str
     output_dir: str
     target_col: str
     ccf_prefix: str
@@ -60,12 +60,17 @@ class ExperimentConfig:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a learning-curve experiment for RV regression on a parquet dataset."
+        description="Run a learning-curve experiment for RV regression on a CSV or parquet dataset."
+    )
+    parser.add_argument(
+        "--input-path",
+        default=None,
+        help="Processed dataset path (.csv or .parquet), typically inside the CCFs folder.",
     )
     parser.add_argument(
         "--input-parquet",
-        required=True,
-        help="Processed parquet dataset path, typically inside the CCFs folder.",
+        default=None,
+        help="Backward-compatible alias for --input-path.",
     )
     parser.add_argument(
         "--output-dir",
@@ -204,13 +209,28 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, fl
     }
 
 
+def load_dataset(input_path: Path) -> pd.DataFrame:
+    suffix = input_path.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(input_path)
+    if suffix == ".parquet":
+        return pd.read_parquet(input_path)
+    raise ValueError(
+        f"Unsupported input format for {input_path}. Use a .csv or .parquet file."
+    )
+
+
 def main() -> None:
     args = parse_args()
     validate_split_fractions(args.train_fraction, args.dev_fraction, args.test_fraction)
     set_global_seed(args.seed)
 
+    resolved_input_path = args.input_path or args.input_parquet
+    if resolved_input_path is None:
+        raise ValueError("Provide --input-path (or legacy --input-parquet).")
+
     cfg = ExperimentConfig(
-        input_parquet=args.input_parquet,
+        input_path=resolved_input_path,
         output_dir=args.output_dir,
         target_col=args.target_col,
         ccf_prefix=args.ccf_prefix,
@@ -231,15 +251,15 @@ def main() -> None:
         dropout=args.dropout,
     )
 
-    input_path = Path(args.input_parquet)
+    input_path = Path(resolved_input_path)
     if not input_path.exists():
-        raise FileNotFoundError(f"Input parquet not found: {input_path}")
+        raise FileNotFoundError(f"Input dataset not found: {input_path}")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading dataset from {input_path} ...")
-    df = pd.read_parquet(input_path)
+    df = load_dataset(input_path)
     ccf_cols = [c for c in df.columns if c.startswith(args.ccf_prefix)]
     if not ccf_cols:
         raise ValueError(f"No feature columns found with prefix '{args.ccf_prefix}'")
