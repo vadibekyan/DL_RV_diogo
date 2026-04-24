@@ -19,16 +19,24 @@ import pandas as pd
 
 
 SNR_PATTERN = re.compile(r"_snr(?P<snr>[0-9]+p[0-9]+)_")
+ACTIVITY_PATTERN = re.compile(r"_(?P<activity>plage|spot)_")
+FIXED_SEED_PATTERN = re.compile(r"random_fixed_seed(?P<seed_id>\d+)_")
+CCF_COLUMN_PATTERN = re.compile(r"ccf_\d+$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Merge SNR ICCF CSV files and append them to the full normalized parquet dataset."
+        description="Merge SNR ICCF CSV files from random HPC folders and append them to the full normalized parquet dataset."
     )
     parser.add_argument(
-        "--snr-input-dir",
-        default="hpc_results/random_rv_iccf_datasets_snr",
-        help="Directory containing the SNR ICCF CSV files.",
+        "--input-root",
+        default="hpc_results",
+        help="Root directory containing the random* SNR ICCF folders.",
+    )
+    parser.add_argument(
+        "--input-dir-pattern",
+        default="random*_rv_iccf_datasets_snr",
+        help="Glob pattern, relative to --input-root, used to find input folders.",
     )
     parser.add_argument(
         "--ccfs-dir",
@@ -60,6 +68,28 @@ def extract_snr(path: Path) -> str:
     return match.group("snr")
 
 
+def extract_activity(path: Path) -> str:
+    match = ACTIVITY_PATTERN.search(path.name)
+    if match is None:
+        raise ValueError(f"Could not extract activity from filename: {path.name}")
+    return match.group("activity")
+
+
+def extract_seed_metadata(path: Path) -> tuple[bool, int | None]:
+    match = FIXED_SEED_PATTERN.search(path.parent.name)
+    if match is None:
+        return False, None
+    return True, int(match.group("seed_id"))
+
+
+def build_ccf_descriptor(path: Path, snr: str, activity: str, fixed_seed: bool, fixed_seed_id: int | None) -> str:
+    seed_label = f"fixed_seed{fixed_seed_id}" if fixed_seed and fixed_seed_id is not None else "random_seed"
+    stem = path.stem
+    if f"_snr{snr}_" in stem:
+        stem = stem.replace(f"_snr{snr}_", "_", 1)
+    return f"{activity}|snr={snr}|{seed_label}|{stem}"
+
+
 def sort_snr_key(snr: str) -> float:
     return float(snr.replace("p", "."))
 
@@ -68,11 +98,12 @@ def normalize_ccf_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     if "rv_true_mps" in df.columns:
-        df["rv_true_mps"] = df["rv_true_mps"].round(2)
+        df["rv_true_mps"] = pd.to_numeric(df["rv_true_mps"], errors="coerce").round(2)
 
-    ccf_cols = [col for col in df.columns if col.startswith("ccf_")]
+    ccf_cols = [col for col in df.columns if CCF_COLUMN_PATTERN.fullmatch(col)]
     if ccf_cols:
-        max_ccf = df[ccf_cols].max(axis=1)
+        df[ccf_cols] = df[ccf_cols].apply(pd.to_numeric, errors="coerce")
+        max_ccf = df[ccf_cols].max(axis=1).replace(0, pd.NA)
         df[ccf_cols] = df[ccf_cols].div(max_ccf, axis=0)
         df[ccf_cols] = df[ccf_cols].round(4)
 
@@ -94,35 +125,65 @@ def align_columns(left: pd.DataFrame, right: pd.DataFrame) -> tuple[pd.DataFrame
     return left[all_columns], right[all_columns]
 
 
+def read_csv_with_metadata(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    snr = extract_snr(path)
+    activity = extract_activity(path)
+    fixed_seed, fixed_seed_id = extract_seed_metadata(path)
+
+    df["snr"] = snr
+    df["activity"] = activity
+    df["fixed_seed"] = fixed_seed
+    df["fixed_seed_id"] = fixed_seed_id
+    df["source_folder"] = path.parent.name
+    df["source_file"] = path.name
+    df["ccf_descriptor"] = build_ccf_descriptor(
+        path=path,
+        snr=snr,
+        activity=activity,
+        fixed_seed=fixed_seed,
+        fixed_seed_id=fixed_seed_id,
+    )
+    return df
+
+
 def main() -> None:
     args = parse_args()
 
-    snr_input_dir = Path(args.snr_input_dir)
+    input_root = Path(args.input_root)
     ccfs_dir = Path(args.ccfs_dir)
     full_dataset_path = Path(args.full_dataset_path)
     backup_path = Path(args.backup_path)
 
-    if not snr_input_dir.exists():
-        raise FileNotFoundError(f"SNR input directory not found: {snr_input_dir}")
+    if not input_root.exists():
+        raise FileNotFoundError(f"Input root directory not found: {input_root}")
 
     ccfs_dir.mkdir(parents=True, exist_ok=True)
 
-    csv_paths = sorted(snr_input_dir.glob("*.csv"))
+    input_dirs = sorted(path for path in input_root.glob(args.input_dir_pattern) if path.is_dir())
+    if not input_dirs:
+        raise FileNotFoundError(
+            f"No input directories matching {args.input_dir_pattern!r} found in {input_root}"
+        )
+
+    csv_paths = sorted(path for input_dir in input_dirs for path in input_dir.glob("*.csv"))
     if not csv_paths:
-        raise FileNotFoundError(f"No CSV files found in {snr_input_dir}")
+        raise FileNotFoundError(f"No CSV files found in matching input directories under {input_root}")
 
     grouped_paths: dict[str, list[Path]] = defaultdict(list)
     for path in csv_paths:
         grouped_paths[extract_snr(path)].append(path)
 
-    print(f"Found {len(csv_paths)} CSV files across {len(grouped_paths)} SNR groups.")
+    print(
+        f"Found {len(csv_paths)} CSV files across {len(input_dirs)} folders and {len(grouped_paths)} SNR groups."
+    )
 
     merged_snr_dfs = []
     summary_rows = []
 
     for snr in sorted(grouped_paths.keys(), key=sort_snr_key):
         paths = grouped_paths[snr]
-        dfs = [pd.read_csv(path) for path in paths]
+        dfs = [read_csv_with_metadata(path) for path in paths]
         merged_df = pd.concat(dfs, axis=0, ignore_index=True)
         merged_df = normalize_ccf_df(merged_df)
         merged_df["dataset_label"] = f"active_snr_{snr}"
@@ -136,6 +197,10 @@ def main() -> None:
                 "snr": snr,
                 "n_files": len(paths),
                 "n_rows": len(merged_df),
+                "n_spot_files": sum(extract_activity(path) == "spot" for path in paths),
+                "n_plage_files": sum(extract_activity(path) == "plage" for path in paths),
+                "n_fixed_seed_files": sum(extract_seed_metadata(path)[0] for path in paths),
+                "n_variable_seed_files": sum(not extract_seed_metadata(path)[0] for path in paths),
                 "output_path": str(out_path),
             }
         )
