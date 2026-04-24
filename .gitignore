@@ -26,4 +26,5 @@ Thumbs.db
 # *.csv
 
 hpc_results/
+CCFs/not_nessesary/
 .codex
