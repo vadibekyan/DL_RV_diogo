@@ -32,6 +32,14 @@ from astropy.io import fits
 from tqdm.auto import tqdm
 
 
+def get_first_header_value(hdr, keys: list[str], default=np.nan):
+    for key in keys:
+        value = hdr.get(key)
+        if value is not None:
+            return value
+    return default
+
+
 def read_s1d_spectrum(path: str | Path) -> tuple[dict[str, Any], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     path = Path(path)
     if not path.exists():
@@ -49,11 +57,21 @@ def read_s1d_spectrum(path: str | Path) -> tuple[dict[str, Any], np.ndarray, np.
         meta = {
             "source_file": path.name,
             "source_path": str(path),
-            "object": hdr.get("OBJECT"),
+            "object": get_first_header_value(hdr, ["OBJECT", "HIERARCH TNG OBS TARG NAME"], default=None),
             "date_obs": hdr.get("DATE-OBS"),
             "mjd_obs": hdr.get("MJD-OBS"),
-            "berv_kms": float(hdr.get("HIERARCH ESO QC BERV", np.nan)),
-            "bervmax_kms": float(hdr.get("HIERARCH ESO QC BERVMAX", np.nan)),
+            "berv_kms": float(
+                get_first_header_value(
+                    hdr,
+                    ["HIERARCH ESO QC BERV", "ESO QC BERV", "HIERARCH TNG QC BERV", "TNG QC BERV"],
+                )
+            ),
+            "bervmax_kms": float(
+                get_first_header_value(
+                    hdr,
+                    ["HIERARCH ESO QC BERVMAX", "ESO QC BERVMAX", "HIERARCH TNG QC BERVMAX", "TNG QC BERVMAX"],
+                )
+            ),
         }
 
     return meta, wave_air, flux, error, quality
